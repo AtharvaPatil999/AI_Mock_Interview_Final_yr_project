@@ -4,7 +4,7 @@ import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
 
 import { db } from "@/firebase/admin";
-//import { feedbackSchema } from "@/constants";
+import { feedbackSchema } from "@/constants";
 
 export async function createFeedback(params: CreateFeedbackParams) {
   const { interviewId, userId, transcript, feedbackId } = params;
@@ -18,9 +18,7 @@ export async function createFeedback(params: CreateFeedbackParams) {
       .join("");
 
     const { object } = await generateObject({
-      model: google("gemini-2.0-flash-001", {
-        structuredOutputs: false,
-      }), 
+      model: google("gemini-2.0-flash-001"),
       schema: feedbackSchema,
       prompt: `
         You are an AI interviewer analyzing a mock interview. Your task is to evaluate the candidate based on structured categories. Be thorough and detailed in your analysis. Don't be lenient with the candidate. If there are mistakes or areas for improvement, point them out.
@@ -95,15 +93,28 @@ export async function getLatestInterviews(
 ): Promise<Interview[] | null> {
   const { userId, limit = 20 } = params;
 
+  // Only filter by finalized to avoid composite index requirement
   const interviews = await db
     .collection("interviews")
-    .orderBy("createdAt", "desc")
     .where("finalized", "==", true)
-    .where("userId", "!=", userId)
-    .limit(limit)
     .get();
 
-  return interviews.docs.map((doc) => ({
+  // Filter out current user's interviews in memory
+  const filteredDocs = interviews.docs.filter(
+    (doc) => doc.data().userId !== userId
+  );
+
+  // Sort in memory by createdAt (newest first)
+  const sortedDocs = filteredDocs.sort((a, b) => {
+    const aDate = new Date(a.data().createdAt || 0);
+    const bDate = new Date(b.data().createdAt || 0);
+    return bDate.getTime() - aDate.getTime();
+  });
+
+  // Apply limit after sorting
+  const limitedDocs = sortedDocs.slice(0, limit);
+
+  return limitedDocs.map((doc) => ({
     id: doc.id,
     ...doc.data(),
   })) as Interview[];
@@ -115,10 +126,16 @@ export async function getInterviewsByUserId(
   const interviews = await db
     .collection("interviews")
     .where("userId", "==", userId)
-    .orderBy("createdAt", "desc")
     .get();
 
-  return interviews.docs.map((doc) => ({
+  // Sort in memory to avoid composite index requirement
+  const sortedDocs = interviews.docs.sort((a, b) => {
+    const aDate = new Date(a.data().createdAt || 0);
+    const bDate = new Date(b.data().createdAt || 0);
+    return bDate.getTime() - aDate.getTime();
+  });
+
+  return sortedDocs.map((doc) => ({
     id: doc.id,
     ...doc.data(),
   })) as Interview[];

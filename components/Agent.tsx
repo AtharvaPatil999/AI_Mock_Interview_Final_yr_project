@@ -34,10 +34,12 @@ const Agent = ({
   const [messages, setMessages] = useState<SavedMessage[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [lastMessage, setLastMessage] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const onCallStart = () => {
       setCallStatus(CallStatus.ACTIVE);
+      setError(null); // Clear any previous errors
     };
 
     const onCallEnd = () => {
@@ -61,8 +63,44 @@ const Agent = ({
       setIsSpeaking(false);
     };
 
-    const onError = (error: Error) => {
-      console.log("Error:", error);
+    const onError = (error: any) => {
+      console.error("VAPI Error:", error);
+
+      // Extract error message from various possible error formats
+      let errorMessage = "";
+
+      if (typeof error === "string") {
+        errorMessage = error;
+      } else if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.error) {
+        errorMessage = typeof error.error === "string" ? error.error : JSON.stringify(error.error);
+      } else {
+        errorMessage = JSON.stringify(error);
+      }
+
+      console.log("Parsed error message:", errorMessage);
+
+      // Check if this is a meeting ejection or end error
+      const isMeetingEndError =
+        errorMessage.toLowerCase().includes("meeting ended") ||
+        errorMessage.toLowerCase().includes("ejection") ||
+        errorMessage.toLowerCase().includes("meeting has ended");
+
+      if (isMeetingEndError) {
+        // Don't show error for normal meeting end, just finish the call
+        console.log("Meeting ended, processing as normal call end");
+        if (callStatus === CallStatus.ACTIVE) {
+          setCallStatus(CallStatus.FINISHED);
+        } else {
+          setCallStatus(CallStatus.INACTIVE);
+        }
+        // Don't set error message for normal meeting ends
+      } else if (errorMessage) {
+        // Only show error for actual errors
+        setError("An error occurred during the call. Please try again.");
+        setCallStatus(CallStatus.INACTIVE);
+      }
     };
 
     vapi.on("call-start", onCallStart);
@@ -190,6 +228,15 @@ const Agent = ({
             >
               {lastMessage}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Error Message Display */}
+      {error && (
+        <div className="w-full flex justify-center mb-4">
+          <div className="bg-red-500/10 border border-red-500/50 text-red-500 px-6 py-3 rounded-lg max-w-lg text-center">
+            <p className="text-sm">{error}</p>
           </div>
         </div>
       )}
